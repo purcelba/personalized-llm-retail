@@ -1,0 +1,8 @@
+data/raw/
+data/retail.db
+data/plots/
+outputs/
+.env
+__pycache__/
+*.pyc
+.DS_Store

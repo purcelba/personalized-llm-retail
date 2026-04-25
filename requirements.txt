@@ -1,0 +1,11 @@
+ucimlrepo
+pandas
+numpy
+scikit-learn
+implicit
+xgboost
+anthropic
+fastapi
+uvicorn
+tqdm
+pytest
