@@ -24,38 +24,21 @@ System: You are a product recommendation assistant for an online retailer.
 User: [tier-specific context block]
 ```
 
-## Context blocks by tier
+## Context blocks by group
 Build each block by joining data from the database using customer_id.
 
-**T0 — purchase history only**
+**`llm_base` — purchase history only**
 ```
 Customer purchase history:
 - {product_description} (purchased {n} times)
 ...
 ```
 
-**T1 — + RFM segment + popularity**
+**`llm_cf` — + CF neighbor products**
 ```
-[T0 block]
-
-Customer segment: {segment_label}
-Top 5 most popular products in catalog: {product_list}
-```
-
-**T2 — + CF neighbor products**
-```
-[T1 block]
+[llm_base block]
 
 Customers with similar purchase patterns also bought: {cf_neighbor_products}
-```
-
-**T3 — + churn + propensity + seasonality**
-```
-[T2 block]
-
-Customer churn probability: {churn_prob:.2f}
-High purchase propensity products: {propensity_list}
-Seasonal products relevant to current month: {seasonal_products}
 ```
 
 ## API call pattern

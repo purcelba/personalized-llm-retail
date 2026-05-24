@@ -9,3 +9,6 @@ fastapi
 uvicorn
 tqdm
 pytest
+openpyxl
+matplotlib
+python-dotenv

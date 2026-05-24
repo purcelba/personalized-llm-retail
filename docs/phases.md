@@ -2,16 +2,13 @@
 
 | # | Phase | Script | Key output | Smoke test | Full run |
 |---|---|---|---|---|---|
-| 1 | Ingest & Clean | `src/ingest.py` | `transactions` table | todo | todo |
-| 2 | EDA | `src/eda.py` | Quality report, tier counts | todo | todo |
-| 3 | Feature Engineering | `src/features.py` | `customers`, `products` tables | todo | todo |
-| 4 | Holdout Construction | `src/holdout.py` | `holdout` table | todo | todo |
-| 5 | Collaborative Filtering | `src/cf.py` | `cf_recommendations`, baseline metrics | todo | todo |
-| 6 | LLM Runs (T0–T3) | `src/llm.py` | `llm_results` table | todo | todo |
-| 7 | Evaluation | `src/evaluate.py` | `eval_results`, `run_log` rows | todo | todo |
-| 8 | Reporting | `src/report.py` | Console summary + plots | todo | todo |
-| 9 | NL Query Interface | `src/nl_query.py` | Interactive query loop | todo | todo |
-| 10 | Recommendations API | `src/api.py` | FastAPI server serving pre-computed recs | todo | todo |
+| 1 | Ingest & Clean | `src/ingest.py` | `transactions` table | done | done |
+| 2 | EDA | `src/eda.py` | Quality report, tier counts | done | done |
+| 3 | Feature Engineering | `src/features.py` | `customers`, `products` tables | done | done |
+| 4 | Holdout Construction | `src/holdout.py` | `holdout` table | done | done |
+| 5 | Collaborative Filtering | `src/cf.py` | `cf_recommendations`, baseline metrics | done | done |
+| 6 | LLM Runs (llm_base, llm_cf) | `src/llm.py` | `llm_results` table | todo (rerun pending) | todo |
+| 7 | Evaluation | `src/evaluate.py` | `eval_results`, `run_log` rows | todo (rerun pending) | todo |
 
 **Smoke test:** 50 customers, `dev_model_id` (Haiku), all phases end-to-end.
 **Full run:** all customers, `model_id` (Sonnet). Do not start until smoke test column is all `done`.
@@ -23,28 +20,31 @@ Values from Project Config in CLAUDE.md.
 
 **Goal:** Download the raw dataset, clean it, and load it into SQLite as the foundation for all downstream work.
 
-**Inputs:** UCI Online Retail II via `ucimlrepo` (dataset_id from project config)
+**Inputs:** UCI Online Retail II — direct download of `online_retail_II.xlsx` from the UCI archive (`ucimlrepo` lists id=502 but does not serve it).
 
 **Steps:**
-- [ ] `fetch_ucirepo(id=dataset_id)` — returns a dict with `data.features` and `data.targets`; combine into one DataFrame
-- [ ] Rename columns to snake_case: `invoice_id`, `stock_code`, `description`, `quantity`, `invoice_date`, `price`, `customer_id`, `country`
-- [ ] Parse `invoice_date` to datetime
-- [ ] Drop rows where `customer_id` is null
-- [ ] Exclude invoices where `invoice_id` starts with `cancellation_prefix` (from project config)
-- [ ] Drop rows where `quantity <= 0` or `price <= 0`
-- [ ] Write to `transactions` table (CREATE TABLE IF NOT EXISTS + INSERT OR REPLACE)
+- [x] Download `online_retail_II.xlsx` from `https://archive.ics.uci.edu/ml/machine-learning-databases/00502/` into `data/raw/`; read both sheets with `pd.read_excel(sheet_name=None)` and concat
+- [x] Rename columns to snake_case: `invoice_id`, `stock_code`, `description`, `quantity`, `invoice_date`, `price`, `customer_id`, `country`
+- [x] Parse `invoice_date` to datetime
+- [x] Drop rows where `customer_id` is null
+- [x] Exclude invoices where `invoice_id` starts with `cancellation_prefix` (from project config)
+- [x] Drop rows where `quantity <= 0` or `price <= 0`
+- [x] Write to `transactions` table (CREATE TABLE IF NOT EXISTS, then DELETE + append for idempotent reload)
 
 **Outputs:** `transactions` table
 
 **Validation:**
-- [ ] Print row count before and after cleaning; expect ~400k → ~380k rows
-- [ ] Assert no null `customer_id` remain
-- [ ] Assert no invoice_ids starting with cancellation prefix remain
-- [ ] Print date range to confirm dataset spans ~2 years
+- [x] Print row count before and after cleaning. Actual: 1,067,371 → 805,549 rows (the dataset covers 2009–2011 across two sheets; original ~400k → ~380k estimate referred to the 2010–2011 sheet only).
+- [x] Assert no null `customer_id` remain
+- [x] Assert no invoice_ids starting with cancellation prefix remain
+- [x] Print date range. Actual: 2009-12-01 → 2011-12-09 (~2 years).
 
 **Gotchas:**
-- `ucimlrepo` returns the two annual sheets already combined — no manual merge needed
+- `ucimlrepo` package returns `DatasetNotFoundError` for id=502 even though the dataset is listed — fall back to the archive `.xlsx`
+- The xlsx contains two sheets (`Year 2009-2010`, `Year 2010-2011`); concat both
 - `customer_id` comes through as float (e.g. `12345.0`) — cast to int then string
+- `(invoice_id, stock_code)` is NOT unique — same invoice can list the same product on multiple line items; do not declare it as a primary key (Phase 2 audits these duplicates)
+- Requires `openpyxl` to read the xlsx (added to `requirements.txt`)
 
 ---
 
@@ -55,14 +55,14 @@ Values from Project Config in CLAUDE.md.
 **Inputs:** `transactions` table
 
 **Steps:**
-- [ ] Create `eda_output_dir` if it doesn't exist (path from project config)
-- [ ] Check shape, dtypes, null counts per column — save summary to `quality_report.txt`
-- [ ] Flag duplicate invoice+stock_code combinations — log count to console
-- [ ] Report negative quantity and zero price counts (already excluded, but verify)
-- [ ] Compute purchase count per customer; assign frequency tier labels using thresholds from project config — save counts table to `freq_tier_counts.csv`
-- [ ] Report top-20 products by transaction volume — save to `top_products.csv`; flag products with only one transaction
-- [ ] Plot monthly transaction volume — save to `monthly_volume.png`
-- [ ] Report cancellation rate by country (re-load raw data for this step only) — save to `cancellation_by_country.csv`
+- [x] Create `eda_output_dir` if it doesn't exist (path from project config)
+- [x] Check shape, dtypes, null counts per column — save summary to `quality_report.txt`
+- [x] Flag duplicate invoice+stock_code combinations — log count to console (actual: 36,684)
+- [x] Report negative quantity and zero price counts (already excluded, but verify) — both 0 as expected
+- [x] Compute purchase count per customer; assign frequency tier labels using thresholds from project config — save counts table to `freq_tier_counts.csv`
+- [x] Report top-20 products by transaction volume — save to `top_products.csv`; flag products with only one transaction (actual: 122)
+- [x] Plot monthly transaction volume — save to `monthly_volume.png`
+- [x] Report cancellation rate by country (re-load raw data for this step only) — save to `cancellation_by_country.csv`
 
 **Outputs:** `outputs/eda/` — see table below
 
@@ -75,13 +75,23 @@ Values from Project Config in CLAUDE.md.
 | `cancellation_by_country.csv` | Cancellation rate per country |
 
 **Validation:**
-- [ ] All five output files exist after the run
-- [ ] Frequency tier counts must be non-zero for all tiers; log a warning if any tier has fewer than 10 customers
-- [ ] Cold + sparse customers should be the majority of the base
+- [x] All five output files exist after the run
+- [x] Frequency tier counts must be non-zero for all tiers; log a warning if any tier has fewer than 10 customers (all tiers ≥ 140)
+- [x] Cold + sparse customers should be the majority of the base (actual: 69.4%)
+
+**Actual tier distribution (5,878 customers total):**
+| Tier | Customers | % |
+|---|---|---|
+| cold | 2,567 | 43.67 |
+| sparse | 1,510 | 25.69 |
+| moderate | 1,331 | 22.64 |
+| rich | 330 | 5.61 |
+| champion | 140 | 2.38 |
 
 **Gotchas:**
 - EDA runs on cleaned `transactions` — cancellations are already excluded; load raw data separately for the cancellation audit step
 - Use `matplotlib.use("Agg")` so the plot saves without a display
+- `matplotlib` was missing from `requirements.txt`; added during Phase 2
 
 ---
 
@@ -92,30 +102,48 @@ Values from Project Config in CLAUDE.md.
 **Inputs:** `transactions` table
 
 **Customer feature steps:**
-- [ ] Compute recency (days from reference date = max invoice_date in dataset), frequency (distinct invoice count), monetary (sum of quantity × price) per customer
-- [ ] Log-transform all three (add 1 before log to handle zeros)
-- [ ] Standardize with `StandardScaler`
-- [ ] Fit `KMeans(n_clusters=kmeans_k, random_state=random_seed)` on standardized RFM
-- [ ] Label segments descriptively by centroid rank (e.g. champions = high F+M, low R; at_risk = high R, declining F+M)
-- [ ] Assign `freq_tier` from project config thresholds
-- [ ] Write to `customers` table
+- [x] Compute recency (days from reference date = max invoice_date in dataset), frequency (distinct invoice count), monetary (sum of quantity × price) per customer
+- [x] Log-transform all three (add 1 before log to handle zeros)
+- [x] Standardize with `StandardScaler`
+- [x] Fit `KMeans(n_clusters=kmeans_k, random_state=random_seed)` on standardized RFM
+- [x] Label segments descriptively by centroid rank: champions, loyal, at_risk, hibernating (k=4)
+- [x] Assign `freq_tier` from project config thresholds
+- [x] Write to `customers` table (5,878 rows)
 
 **Product feature steps:**
-- [ ] Count total units sold per product; rank ascending (1 = most popular)
-- [ ] Compute monthly sales per product; calculate CV (std/mean) as seasonality index
-- [ ] Flag products where CV > `seasonality_cv_threshold` (from project config)
-- [ ] Write to `products` table
+- [x] Count total units sold per product; rank ascending (1 = most popular)
+- [x] Compute monthly sales per product; calculate CV (std/mean) as seasonality index
+- [x] Flag products where CV > `seasonality_cv_threshold` (from project config) — 3,785 of 4,631 products flagged
+- [x] Write to `products` table (4,631 rows)
 
 **Outputs:** `customers` table, `products` table
 
 **Validation:**
-- [ ] Segment label distribution: no single segment should exceed 60% of customers
-- [ ] `freq_tier` distribution should match EDA counts from Phase 2
-- [ ] Seasonality index range should be 0–3; flag any outliers above 5
+- [x] Segment label distribution: no single segment should exceed 60% of customers (max: hibernating 35.06%)
+- [x] `freq_tier` distribution should match EDA counts from Phase 2 (matches exactly: 2567/1510/1331/330/140)
+- [x] Seasonality index range should be 0–3; flag any outliers above 5 (actual range 0.000–4.314, no outliers above 5)
+
+**Segment labeling rule:**
+KMeans fits 4 clusters on standardized log(RFM). Each centroid is scored as
+`score = -recency_z + frequency_z + monetary_z` (all in standardized log space),
+then centroids are sorted by score descending and named in order:
+`champions`, `loyal`, `at_risk`, `hibernating`. This is a one-dimensional best→worst
+projection of the 3D centroid space, not a separate rule per segment. Caveat: because
+recency dominates the score, `loyal` (recent, low-freq) ranks above `at_risk`
+(lapsed, mid-freq) even though `at_risk` has higher frequency/monetary.
+
+**Actual segment distribution and median RFM:**
+| Segment | n | % | Recency (days) | Frequency (invoices) | Monetary (£) |
+|---|---|---|---|---|---|
+| champions | 1,115 | 18.97 | 15 | 13 | 5,356 |
+| loyal | 1,212 | 20.62 | 22 | 3 | 744 |
+| at_risk | 1,490 | 25.35 | 162 | 5 | 1,613 |
+| hibernating | 2,061 | 35.06 | 399 | 1 | 295 |
 
 **Gotchas:**
 - Reference date must be the max date in the *full* dataset, not per-customer — use a single global max before any filtering
-- A few customers may have monetary = 0 after exclusions; log and drop them before clustering
+- A few customers may have monetary = 0 after exclusions; log and drop them before clustering (none in this run)
+- The Phase 2 seasonality range estimate of "0–3" was conservative; the actual upper bound on this dataset is ~4.3 (still under the >5 outlier threshold)
 
 ---
 
@@ -126,23 +154,33 @@ Values from Project Config in CLAUDE.md.
 **Inputs:** `transactions` table, `customers` table (for freq_tier labels)
 
 **Steps:**
-- [ ] For each customer, identify their most recent invoice by `invoice_date`
-- [ ] Extract all `stock_code` values from that invoice as ground truth positives
-- [ ] Exclude customers with only one distinct invoice (no training data would remain)
-- [ ] Join `freq_tier` from `customers` table
-- [ ] Write to `holdout` table
-- [ ] Verify all freq_tiers are represented; report counts per tier
+- [x] For each customer, identify their most recent invoice by `invoice_date`
+- [x] Extract all `stock_code` values from that invoice as ground truth positives
+- [x] Exclude customers with only one distinct invoice (no training data would remain) — 1,623 excluded
+- [x] Join `freq_tier` from `customers` table
+- [x] Write to `holdout` table (4,255 customers, 83,672 ground-truth rows)
+- [x] Verify all freq_tiers are represented; report counts per tier
 
 **Outputs:** `holdout` table
 
 **Validation:**
-- [ ] No customer should appear more than once in `holdout` (one held-out invoice per customer)
-- [ ] All five freq_tiers must have at least one customer represented; warn if any tier has fewer than 5
-- [ ] Holdout customer count should be < total customer count (some dropped due to single invoice)
+- [x] No customer should appear more than once in `holdout` (one held-out invoice per customer) — 4,255 distinct (customer, invoice) pairs == 4,255 customers
+- [x] All five freq_tiers must have at least one customer represented; warn if any tier has fewer than 5 (all well above)
+- [x] Holdout customer count should be < total customer count (some dropped due to single invoice) — 4,255 < 5,878
+
+**Actual holdout customers per freq_tier:**
+| Tier | Holdout customers | (vs. Phase 2 total) |
+|---|---|---|
+| cold | 944 | 2,567 — most cold customers had a single invoice |
+| sparse | 1,510 | 1,510 |
+| moderate | 1,331 | 1,331 |
+| rich | 330 | 330 |
+| champion | 140 | 140 |
 
 **Gotchas:**
 - Some invoices contain only one product — that's fine, it's still a valid ground truth
 - Ties in invoice_date (same customer, same date, two invoices): pick the one with the higher invoice_id as a tiebreaker
+- The `holdout` PK is `(customer_id, stock_code)` — duplicate line items on the held-out invoice (same product listed twice) are deduped before insert
 
 ---
 
@@ -153,57 +191,79 @@ Values from Project Config in CLAUDE.md.
 **Inputs:** `transactions` table (excluding holdout invoices), `holdout` table
 
 **Steps:**
-- [ ] Filter `transactions` to exclude each customer's holdout invoice
-- [ ] Build a sparse customer × product interaction matrix using `scipy.sparse.csr_matrix` (values = quantity, treat as implicit feedback)
-- [ ] Fit `implicit.als.AlternatingLeastSquares(factors=50, iterations=20, random_state=random_seed)`
-- [ ] For each customer, generate top-K recommendations (K from project config), excluding already-purchased products
-- [ ] Write to `cf_recommendations` table with columns: `customer_id`, `product_id`, `rank`, `score`
-- [ ] Evaluate against `holdout`: compute HR@K, NDCG@K per customer, coverage across all customers
-- [ ] Write per-customer rows to `eval_results` (model=`cf`, tier=`baseline`)
-- [ ] Aggregate and write summary row to `run_log`
+- [x] Filter `transactions` to exclude each customer's holdout invoice
+- [x] Build a sparse customer × product interaction matrix (values = total quantity per customer/product, implicit feedback). Actual: 5,878 × 4,623, 426,869 nonzeros (1.57% density).
+- [x] Fit `implicit.als.AlternatingLeastSquares(factors=50, iterations=20, regularization=0.01, random_state=42)` with confidence weighting `c = 1 + 40 · quantity`
+- [x] For each customer, generate top-K recommendations (K=10), `filter_already_liked_items=True`
+- [x] Write to `cf_recommendations` table with columns: `customer_id`, `stock_code`, `rank`, `score`
+- [x] Evaluate against `holdout`: HR@K, NDCG@K per customer, coverage across all customers
+- [x] Write per-customer rows to `eval_results` (model=`cf`, tier=`baseline`)
+- [x] Aggregate and write summary row to `run_log`
 
 **Outputs:** `cf_recommendations` table, rows in `eval_results` and `run_log`
 
 **Validation:**
-- [ ] CF HR@K for cold customers should be near 0 (expected — they have little signal)
-- [ ] CF HR@K for champion customers should be meaningfully above 0
-- [ ] Coverage should be > 1% of catalog (sanity check that diverse products are being recommended)
+- [~] CF HR@K for cold customers — **expectation reversed**. Cold tier has the *highest* HR@K (0.30), not near 0. See "Already-liked masking artifact" below.
+- [~] CF HR@K for champion customers — **expectation reversed**. Champions have the *lowest* HR@K (0.014).
+- [x] Coverage > 1% of catalog. Actual: **57.7%** (2,671 / 4,631 products).
+
+**Actual baseline metrics (run_id logged in `run_log`):**
+| Metric | Value |
+|---|---|
+| HR@10 (overall) | 0.1556 |
+| NDCG@10 (overall) | 0.0239 |
+| Coverage | 57.68% |
+
+**HR@10 by frequency tier:**
+| Tier | HR@10 | n customers |
+|---|---|---|
+| cold | 0.3008 | 944 |
+| sparse | 0.1748 | 1,510 |
+| moderate | 0.0729 | 1,331 |
+| rich | 0.0455 | 330 |
+| champion | 0.0143 | 140 |
+
+**Already-liked masking artifact (decision: keep, not fix):**
+The Phase 4 holdout is each customer's most recent full invoice. Active customers (champion/rich) tend to *re-buy* products from earlier invoices, so most of their held-out products are already in their training history. With `filter_already_liked_items=True`, CF excludes those products from the candidate pool entirely — making them unrecoverable by construction. Cold/sparse customers' last invoices contain a higher share of *new* products, which CF can score normally.
+
+We are **keeping** `filter_already_liked_items=True` for all models (CF and LLM tiers). This makes the benchmark a test of **novel-item discovery from each context tier**, not repeat-purchase prediction. The LLM tiers will face the same masking constraint, so the comparison is apples-to-apples. Phase 7 commentary should interpret tier-stratified results in this light: the question is whether richer context lets the LLM beat CF for cold customers (where novelty is high) and whether anything can lift active-customer scores given the masking floor.
 
 **Gotchas:**
-- `implicit` expects items × users matrix, not users × items — transpose before fitting
-- Must zero out already-purchased items in recommendations; `implicit` has a `filter_already_liked_items` flag
+- `implicit` v0.7+ takes a user×item matrix in `model.fit(...)` (it transposes internally) — do **not** transpose manually
+- Must mask already-purchased items via `filter_already_liked_items=True` (this is what creates the artifact above — see decision)
+- Use `model.recommend(np.arange(n), matrix, N=K, filter_already_liked_items=True)` for batch generation — much faster than per-customer loops
 
 ---
 
-## Phase 6 — LLM Runs (T0–T3)
+## Phase 6 — LLM Runs (llm_base, llm_cf)
 
-**Goal:** Generate recommendations at each context enrichment tier using the LLM, checkpointed for resumability.
+**Goal:** Generate recommendations for both LLM groups, checkpointed for resumability.
 
-**Inputs:** `transactions`, `customers`, `products`, `cf_recommendations` tables; for T3: churn/propensity scores computed inline
+**Inputs:** `transactions`, `products`, `cf_recommendations` tables
 
-**Pre-T3 setup:**
-- [ ] Train XGBoost churn classifier on customer RFM features; store scores in memory
-- [ ] Train XGBoost propensity scorer; store scores in memory
+**For each group llm_base → llm_cf:**
+- [x] Load customers to process; filter out those already in `llm_results` for this group + run_id (checkpoint)
+- [x] For each customer, assemble the group-appropriate context block (see `skills/llm_prompts.md`)
+- [x] Call the API using `model_id` (full run) or `dev_model_id` (smoke test)
+- [x] Parse JSON response; on failure log the raw response and insert a null row — do not abort
+- [x] Write result to `llm_results` immediately after each call
+- [x] Log progress to console every `checkpoint_every` calls
 
-**For each tier T0 → T1 → T2 → T3:**
-- [ ] Load customers to process; filter out those already in `llm_results` for this tier + run_id (checkpoint)
-- [ ] For each customer, assemble the tier-appropriate context block (see `skills/llm_prompts.md`)
-- [ ] Call the API using `model_id` (full run) or `dev_model_id` (smoke test)
-- [ ] Parse JSON response; on failure log the raw response and insert a null row — do not abort
-- [ ] Write result to `llm_results` immediately after each call
-- [ ] Log progress to console every `checkpoint_every` calls
+**Outputs:** `llm_results` table (one row per customer per group)
 
-**Outputs:** `llm_results` table (one row per customer per tier)
-
-**Validation:**
-- [ ] After each tier completes, verify row count equals expected customer count
+**Validation (smoke, n=100, Haiku):**
+- [ ] After each group completes, verify row count equals expected customer count
 - [ ] Parse failure rate should be < 5%; investigate prompt if higher
-- [ ] Spot-check 3–5 rationale strings to confirm the model is using the context
+- [ ] Spot-check 3–5 rationale strings to confirm the model is using the context (rationales reference history; `llm_cf` rationales reference CF neighbors)
+
+**Design note (T1/T3 dropped, renamed — 2026-04-27 / 2026-05-23):** earlier iterations had four tiers T0–T3. T1 (segment + global popularity) was redundant with the popularity-curated candidate list and empirically hurt HR@10; T3's churn/propensity labels were deterministic functions of recency (an input feature) — target leakage. The remaining T0/T2 were renamed `llm_base` and `llm_cf` to lead with the three-group framing: **`cf_baseline`** (ML-only) vs **`llm_base`** (LLM-only) vs **`llm_cf`** (LLM+CF).
 
 **Gotchas:**
-- Run tiers in strict T0 → T1 → T2 → T3 order; each tier's prompt builds on the previous context block
+- Run groups in `llm_base` → `llm_cf` order; `llm_cf`'s prompt builds on the `llm_base` context block
 - Smoke test uses `dev_model_id` (Haiku) and `sample_size` customers — verify both are set before starting
-- T3 churn/propensity scores must be computed before the T3 loop, not inside it
+- Anthropic tier-1 rate limits: 50 RPM and 10K output tokens/min on Haiku — keep `--workers 4 --rpm 45` for the smoke; full Sonnet run will need a similar rate limit
+- The model returns recommendations as `"description (STOCKCODE)"` when given a `- description (CODE)` candidate list — prompt explicitly demands bare codes, and `parse_response` has a `(CODE)` regex fallback as belt-and-suspenders
+- Strict "must pick from candidate list" prompts cause empties to balloon for cold customers; the candidate list is positioned as *suggestions* and validation only enforces `catalog - purchased`
 
 ---
 
@@ -214,120 +274,24 @@ Values from Project Config in CLAUDE.md.
 **Inputs:** `holdout`, `cf_recommendations`, `llm_results`, `customers` tables
 
 **Steps:**
-- [ ] For each (model, tier) pair — CF baseline + T0/T1/T2/T3:
-  - [ ] Join recommendations with holdout per customer
-  - [ ] Compute HR@K: 1 if any holdout product appears in top-K, else 0
-  - [ ] Compute NDCG@K: position-discounted relevance score
-  - [ ] Write one row per customer to `eval_results`
-- [ ] Compute coverage: unique products recommended / total products in catalog
-- [ ] Aggregate means by freq_tier and by RFM segment
-- [ ] Write one summary row per (model, tier) to `run_log`
+- [x] For each (model, tier) pair — cf_baseline + llm_base + llm_cf:
+  - [x] Join recommendations with holdout per customer
+  - [x] Compute HR@K: 1 if any holdout product appears in top-K, else 0
+  - [x] Compute NDCG@K: position-discounted relevance score
+  - [x] Write one row per customer to `eval_results`
+- [x] Compute coverage: unique products recommended / total products in catalog
+- [x] Aggregate means by freq_tier and by RFM segment
+- [x] Write one summary row per (model, tier) to `run_log`
 
 **Outputs:** `eval_results` table, `run_log` summary rows
 
-**Validation:**
-- [ ] T0 should beat CF for cold customers (LLM uses description semantics, CF has no signal)
-- [ ] T3 should have highest HR@K overall
-- [ ] Coverage should increase with higher context tiers
+**Validation (smoke, n=100 — rerun pending after T1/T3 removal):**
+- [ ] `llm_cf` should beat `llm_base` (CF context helps the LLM)
+- [ ] `llm_cf` should match or beat `cf_baseline` (LLM re-ranks CF neighbors usefully)
+- [ ] LLM groups should outperform `cf_baseline` for **cold** tier (novelty is high there)
+- [ ] For **rich/champion** tiers, all models heavily depressed by masking artifact (Phase 5 note)
 
 **Gotchas:**
 - LLM recommendations are returned as product descriptions, not stock codes — must fuzzy-match or normalize to stock codes before comparing with holdout
 - Customers with no recommendations (parse failure rows) should be excluded from metric aggregation and noted in run_log
-
----
-
-## Phase 8 — Reporting
-
-**Goal:** Aggregate and visualize benchmark results for comparison across models, tiers, and customer segments.
-
-**Inputs:** `eval_results`, `run_log`, `customers` tables
-
-**Steps:**
-- [ ] Pivot table: rows = freq_tier, columns = (model, tier), values = mean HR@K — print to console
-- [ ] Same pivot for NDCG@K
-- [ ] Bar chart: HR@K by context tier, grouped by freq_tier — save to `data/plots/hr_by_tier.png`
-- [ ] Heatmap: RFM segment × context tier, values = HR@K — save to `data/plots/heatmap_segment_tier.png`
-- [ ] Print top-line findings: which tier wins overall, which tier wins for cold customers
-
-**Outputs:** Console summary, plots in `data/plots/`
-
-**Validation:**
-- [ ] Confirm plot files exist at expected paths after the run
-- [ ] Pivot table should show monotonic improvement T0 → T3 for at least cold and sparse tiers
-
-**Gotchas:**
-- `data/plots/` directory must be created if it doesn't exist before saving plots
-- Use non-interactive matplotlib backend (`matplotlib.use("Agg")`) so plots save without a display
-
----
-
-## Phase 9 — NL Query Interface
-
-**Goal:** Interactive natural language interface for querying `retail.db` without writing SQL.
-
-**Inputs:** `retail.db` (all tables), schema description string
-
-**Steps:**
-- [ ] Build a schema context string from the table definitions (see `skills/metadata.md`)
-- [ ] Start a REPL loop: accept a plain-English question from stdin
-- [ ] Send schema + question to the LLM with a prompt requesting a single SELECT statement
-- [ ] Validate the returned SQL (reject anything that isn't SELECT)
-- [ ] Execute against `retail.db`, fetch results
-- [ ] Send result rows back to the LLM to format as a natural language answer
-- [ ] Print the answer; loop back to prompt
-- [ ] Exit cleanly on empty input or `quit`
-
-**Outputs:** Interactive terminal session
-
-**Validation:**
-- [ ] Test the four example queries from `skills/metadata.md`
-- [ ] Confirm SQL injection guard rejects a `DROP TABLE` attempt
-
-**Gotchas:**
-- Result sets can be large — cap at 100 rows before passing back to the LLM for formatting
-- Schema context string must stay under ~2000 tokens; use abbreviated column descriptions if needed
-
----
-
-## Phase 10 — Recommendations API
-
-**Goal:** Serve pre-computed LLM recommendations from `llm_results` via a FastAPI REST API.
-
-**Inputs:** `llm_results`, `products`, `customers` tables
-
-**Steps:**
-- [ ] Add `fastapi` and `uvicorn` to `requirements.txt`
-- [ ] On startup, check which customer_ids have rows in `llm_results` — these are the available customers
-- [ ] Implement `GET /recommendations/{customer_id}` — returns top-K recommendations for the best available tier
-  - [ ] Accept optional `?tier=T0|T1|T2|T3` query param; default to highest tier available for that customer
-  - [ ] Join product descriptions from `products` table so response includes human-readable names
-  - [ ] Return 404 if customer_id has no pre-computed results
-- [ ] Implement `GET /customers` — returns list of customer_ids that have pre-computed results
-- [ ] Implement `GET /health` — returns 200 OK with db row counts for monitoring
-
-**Response shape (`/recommendations/{customer_id}`):**
-```json
-{
-  "customer_id": "12345",
-  "tier": "T3",
-  "recommendations": [
-    {"rank": 1, "product_id": "85123A", "description": "WHITE HANGING HEART T-LIGHT HOLDER"},
-    ...
-  ],
-  "rationale": "..."
-}
-```
-
-**Outputs:** FastAPI server running on `http://localhost:8000`
-
-**Validation:**
-- [ ] `GET /health` returns 200 and correct row counts
-- [ ] `GET /recommendations/{customer_id}` returns correct tier and K results for a known customer
-- [ ] `GET /recommendations/UNKNOWN` returns 404
-- [ ] `GET /recommendations/{customer_id}?tier=T0` returns T0 results even if T3 is available
-- [ ] `GET /customers` returns only customer_ids present in `llm_results`
-
-**Gotchas:**
-- Not all customers will have pre-computed results if Phase 6 ran on a subset — the API should surface only what's available, not error
-- Open a new db connection per request (SQLite doesn't support shared connections across threads safely)
-- Phase 10 is read-only — it never writes to the database
+- Apply the same `filter_already_liked_items` masking to LLM recommendations as CF — exclude any recommended product the customer already bought before the held-out invoice — so CF and LLM are evaluated on identical candidate sets (see Phase 5 decision)
