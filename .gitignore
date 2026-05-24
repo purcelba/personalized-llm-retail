@@ -1,5 +1,7 @@
 data/raw/
 data/retail.db
+data/retail.db-shm
+data/retail.db-wal
 data/plots/
 outputs/
 .env
