@@ -30,7 +30,7 @@ The benchmark suggests three things a practitioner can take to the bank.
 | Rich (16–30 invoices) | 4.5% | 7.0% | +2.4pp |
 | Champion (31+ invoices) | 1.4% | 3.6% | +2.2pp |
 
-The full code, data, and analysis are in the project repository.
+The full code, data, and analysis are in the [project repository](https://github.com/purcelba/personalized-llm-retail).
 
 # Data Overview
 
@@ -72,6 +72,11 @@ The paired comparisons:
 | llm_cf − llm_base | +0.014 [+0.001, +0.026] | **0.034** | +0.003 [+0.001, +0.005] | **0.016** |
 | llm_base − cf_baseline | +0.006 [−0.016, +0.026] | 0.64 | +0.002 [−0.002, +0.006] | 0.34 |
 
+![Overall HR and NDCG]({{ site.baseurl }}/images/personalized-retail/fig1_overall.png "Overall HR and NDCG."){: .center-image }
+<p align="center">
+<font size="2"><b>Figure 1.</b> Overall HR@10 and NDCG@10 across the three recommenders (n=1,612 paired customers). Error bars are 95% bootstrap CIs. LLM + CF leads both metrics; LLM alone is indistinguishable from CF.</font>
+</p>
+
 Two things stand out. First, the LLM-only configuration (`llm_base`) is statistically indistinguishable from CF on both metrics — confidence intervals on the differences sit squarely on zero. The LLM reasoning over purchase history plus popularity is, on average, no better and no worse than 20 years of matrix factorization. Second, adding CF neighbors to the prompt produces a real and significant lift over both CF and `llm_base`. The NDCG advantage is well outside the noise floor.
 
 The interpretation is mechanistic. The LLM isn't replacing the recommender — it's reading CF's output and re-ranking it using product-description semantics ALS doesn't have access to. CF surfaces ten plausibly relevant products; the LLM looks at the customer's history, looks at the candidate descriptions, and picks the subset most likely to land. That's a different skill than ALS's job of generating candidates in the first place.
@@ -80,22 +85,40 @@ The interpretation is mechanistic. The LLM isn't replacing the recommender — i
 
 The overall numbers undersell the size of the effect for the customer cohort where personalization actually pays off.
 
-![HR by frequency tier — placeholder for stacked bar chart]({{ site.baseurl }}/images/personalized-retail/fig1_hr_by_tier.png "HR by frequency tier."){: .center-image }
+![HR by frequency tier]({{ site.baseurl }}/images/personalized-retail/fig2_by_tier.png "HR by frequency tier."){: .center-image }
 <p align="center">
-<font size="2"><b>Figure 1.</b> HR@10 by frequency tier for the three recommenders (n=1,612 paired customers). Bars are 95% bootstrap CIs.</font>
+<font size="2"><b>Figure 2.</b> HR@10 by frequency tier for the three recommenders. Bars are 95% bootstrap CIs. The sparse tier (3–5 invoices) is where the LLM + CF lift is largest and statistically clearest.</font>
 </p>
 
 The clearest win is the **sparse** tier — customers with 3 to 5 prior invoices. There, `llm_cf` beats CF by +6.8pp HR@10 with a 95% CI of [+2.4, +11.4] and p<0.01. NDCG is +1.8pp, also significant. These are customers with enough history for an LLM to reason about taste (favored categories, gift vs. self-purchase patterns) but not so much that ALS's collaborative signal has fully resolved them. That's precisely the regime where adding text-based reasoning over product descriptions adds something the matrix can't see.
 
 Moderate and rich tiers show smaller positive gains in the same direction. The champion tier (31+ invoices) is too small in this dataset (n=139) for the comparison to clear significance on its own, though the direction is consistent.
 
-# Result 3 — Cold Customers Are an Inverted Problem
+# Result 3 — The Lift Has a Price Tag
 
-The one tier where CF beats the LLM-augmented stack is **cold** customers (1–2 prior invoices, HR@10 0.29 for CF vs. 0.25 for llm_cf, p=0.09). This is counterintuitive at first — surely fewer signals should favor the model that can read product descriptions. The explanation is structural.
+The accuracy comparison is only half the story. The three approaches have fundamentally different cost structures, and the right model depends on traffic and unit economics, not just HR@10.
 
-ALS uses `filter_already_liked_items=True` to exclude already-purchased products from the candidate pool, and I apply the same constraint to the LLM. For cold customers, the held-out invoice is mostly *novel* popular items the customer hasn't bought yet — exactly what ALS surfaces directly from its matrix factorization. The LLM, meanwhile, is given the same 50-item shortlist and a thin purchase history; it has less to reason over and gets distracted re-ranking candidates it has no signal on. CF wins by playing the popularity-curated shortlist straight.
+Cost per 1,000 customer-recommendation requests, using Claude Sonnet 4.6 pricing ($3/M input tokens, $15/M output tokens) and the actual prompt sizes from this benchmark:
 
-This also explains a counterintuitive headline pattern: **HR@10 falls monotonically as customer activity goes up.** Cold customers score 29% HR; champions score 1.4%. Active customers re-buy. Their most recent invoices contain products they've bought before, which are masked out of the candidate pool by construction. No recommender can recover them. This is a known artifact of the standard implicit-feedback evaluation setup, and the right interpretation is that the absolute level of HR is less meaningful than the *gap between recommenders within a tier*.
+| Approach | Per call | Per 1,000 customers | Notes |
+|---|---:|---:|---|
+| `cf_baseline` | ~$0 | **~$0** | One ALS fit (~10s on this dataset). Each recommendation is a dot product. Effectively free at recommendation time. |
+| `llm_base` | ~$0.0086 | **~$8.60** | ~850 input + ~400 output tokens per call. |
+| `llm_cf` | ~$0.0089 | **~$8.90** | ~970 input + ~400 output tokens. Requires CF infrastructure underneath. |
+
+![Cost per 1,000 customers]({{ site.baseurl }}/images/personalized-retail/fig3_cost.png "Cost per 1,000 customers."){: .center-image }
+<p align="center">
+<font size="2"><b>Figure 3.</b> Estimated cost per 1,000 customer-recommendation requests. CF is effectively free at recommendation time; LLM approaches add ~$9 per 1,000 customers at Sonnet 4.6 pricing.</font>
+</p>
+
+A few practical implications.
+
+- **Cost shape, not just magnitude.** CF is fixed training cost plus near-zero per-customer serving. LLM is pay-per-recommendation, scaling linearly with traffic — ~$89K/year for 100K customers refreshed weekly.
+- **Pre-compute, don't serve live.** Run `llm_cf` once per customer per week and cache. That's the design assumed in the numbers above.
+- **Route by segment.** The clean lift is in the sparse tier — send only that cohort through `llm_cf` and serve CF for the rest. Cuts cost-per-customer by an order of magnitude while preserving the lift where it matters.
+- **Haiku for dev, Sonnet for prod.** Haiku 4.5 is ~5× cheaper but had higher parse failures and weaker NDCG in testing.
+
+**The bottom line on cost.** Use the offline benchmark to decide *what to A/B test*, not whether to ship — offline HR@10 lift typically compresses several-fold when measured online, and only an A/B test on incremental gross profit (revenue lift × margin minus LLM spend) tells you whether `llm_cf` actually pays back. The recommended starting experiment is a holdout test on the sparse tier alone, where the offline signal is strongest and the cost exposure is smallest.
 
 # Limitations
 
@@ -115,4 +138,4 @@ Three practical implications fall out of this.
 - **The effect is sharpest in mid-frequency customers**, who are also the most commercially interesting cohort. Cold-start has well-developed solutions (popularity + onboarding); whales recommend themselves. The sparse/moderate band is where personalization is hard and where this stack actually moves the needle.
 - **The benchmark itself matters more than vendors usually admit.** `filter_already_liked_items=True` is a near-universal production default that makes high-frequency customers structurally unrecoverable on novel-item HR. Any honest comparison has to stratify by frequency and report paired CIs; aggregate numbers can flip the headline in either direction.
 
-The next natural extension is replacing the candidate-list scaffold with tool-use — giving the LLM a product-search function and letting it pull from the full catalog. That would test the actual ceiling on what an unaided LLM can do, and would let the comparison run apples-to-apples on candidate-space size. The full code, prompts, evaluation harness, and bootstrap analysis are available in the project repository.
+The next natural extension is replacing the candidate-list scaffold with tool-use — giving the LLM a product-search function and letting it pull from the full catalog. That would test the actual ceiling on what an unaided LLM can do, and would let the comparison run apples-to-apples on candidate-space size. The full code, prompts, evaluation harness, and bootstrap analysis are available on [GitHub](https://github.com/purcelba/personalized-llm-retail).
